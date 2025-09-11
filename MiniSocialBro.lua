@@ -276,7 +276,7 @@ local function Layout()
   accent:SetShown(MiniSocialBroDB.accent)
 end
 
--- ===================== Grid Tooltip (klickbar) =====================
+-- ===================== Grid Tooltip (klickbar, sticky) =====================
 local grid = CreateFrame("Frame","MiniSocialBroTooltip", UIParent, "BackdropTemplate")
 grid:SetClampedToScreen(true)
 grid:SetBackdrop({
@@ -288,6 +288,7 @@ grid:SetBackdrop({
 grid:SetBackdropColor(0, 0, 0, 0.90)
 grid:SetBackdropBorderColor(0.9, 0.9, 1, 0.12)
 grid:Hide()
+grid:EnableMouse(true)   -- wichtig: Grid fängt Maus-Events
 
 local function ApplyTooltipStrata()
   if MiniSocialBroDB.tipTop then
@@ -310,15 +311,17 @@ local hNote = header:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
 hName:SetText("Name"); hZone:SetText("Zone"); hLvl:SetText("Lv"); hNote:SetText("Note")
 
 local hint = grid:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
-hint:SetPoint("BOTTOMLEFT", grid, "BOTTOMLEFT", 10, 8)
-hint:SetText("|cffcfcfcfLeft: Whisper   Right: Invite   Alt+Drag: Move|r")
+hint:SetDrawLayer("OVERLAY", 1)
+hint:SetText("|cffffffffLeft: Whisper   Right: Invite   Alt+Drag: Move|r")
 
 local scroll = CreateFrame("ScrollFrame", nil, grid, "UIPanelScrollFrameTemplate")
 local content = CreateFrame("Frame", nil, scroll)
 scroll:SetScrollChild(content)
 content:SetSize(10,10)
+scroll:EnableMouse(true)
 
 local rowsFS = {}
+
 local function AcquireRow(i)
   if not rowsFS[i] then
     local name = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
@@ -332,7 +335,6 @@ local function AcquireRow(i)
     local bg  = content:CreateTexture(nil, "BACKGROUND")
     local btn = CreateFrame("Button", nil, content)
 
-    -- Basis-Handler, final per Zeile in ShowGrid gesetzt
     btn:SetScript("OnMouseDown", function(self, button)
       if button=="LeftButton" and IsAltKeyDown() then
         MiniSocialBroBar:StartMoving()
@@ -369,6 +371,24 @@ grid:SetScript("OnMouseWheel", function(self, delta)
   scroll:SetVerticalScroll(math.max(0, scroll:GetVerticalScroll() - delta*step))
 end)
 
+-- Sticky-hide helpers
+local hideTimer
+local function CancelHide()
+  if hideTimer then hideTimer:Cancel(); hideTimer = nil end
+end
+local function HideGrid() grid:Hide(); scroll:SetVerticalScroll(0) end
+local function ScheduleHide()
+  CancelHide()
+  hideTimer = C_Timer.NewTimer(0.15, function()
+    if not (grid:IsMouseOver() or guildBtn:IsMouseOver() or friendBtn:IsMouseOver()) then
+      HideGrid()
+    end
+  end)
+end
+
+grid:SetScript("OnEnter", function() CancelHide() end)
+grid:SetScript("OnLeave", function() ScheduleHide() end)
+
 local function ShowGrid(anchor, title, rows)
   local cfg = MiniSocialBroDB.tooltip
   local showNote = MiniSocialBroDB.showNote
@@ -382,6 +402,7 @@ local function ShowGrid(anchor, title, rows)
   local pad  = 10
   local gap  = 8
   local rowH = MiniSocialBroDB.compact and 14 or 16
+  local hintH = 14
   local maxRows = cfg.maxRows or 18
 
   hName:ClearAllPoints(); hZone:ClearAllPoints(); hLvl:ClearAllPoints(); hNote:ClearAllPoints()
@@ -445,6 +466,7 @@ local function ShowGrid(anchor, title, rows)
     r.btn.charName = row.name or ""
 
     r.btn:SetScript("OnEnter", function(self)
+      CancelHide()
       GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
       GameTooltip:ClearLines()
       GameTooltip:AddLine(self.charName, 0.9, 0.9, 1)
@@ -466,6 +488,7 @@ local function ShowGrid(anchor, title, rows)
         self.bg:SetColorTexture(0, 0, 0, 0)
       end
       GameTooltip:Hide()
+      ScheduleHide()
     end)
 
     r.name:Show(); r.zone:Show(); r.lvl:Show()
@@ -487,8 +510,12 @@ local function ShowGrid(anchor, title, rows)
   scroll:SetHeight(visibleH)
 
   local w = pad + totalW + pad
-  local h = 40 + 6 + visibleH + 12
+  local h = 40 + 6 + visibleH + 14 + 12 -- +hintH
   grid:SetSize(w, h)
+
+  hint:ClearAllPoints()
+  hint:SetPoint("BOTTOMLEFT", grid, "BOTTOMLEFT", 10, 8)
+  hint:Show()
 
   grid:ClearAllPoints()
   if MiniSocialBroDB.tipDown then
@@ -500,8 +527,6 @@ local function ShowGrid(anchor, title, rows)
   grid:Show()
 end
 
-local function HideGrid() grid:Hide(); scroll:SetVerticalScroll(0) end
-
 -- ===================== Hover / Clicks =====================
 local function UpdateTexts()
   local gCount = select(1, GetGuildRows()) or 0
@@ -511,15 +536,18 @@ local function UpdateTexts()
 end
 
 guildBtn:SetScript("OnEnter", function(self)
+  CancelHide()
   local _, rows = GetGuildRows()
   ShowGrid(self, "Guild", rows)
 end)
+guildBtn:SetScript("OnLeave", function() ScheduleHide() end)
+
 friendBtn:SetScript("OnEnter", function(self)
+  CancelHide()
   local _, rows = GetFriendRows()
   ShowGrid(self, "Friends", rows)
 end)
-guildBtn:SetScript("OnLeave", HideGrid)
-friendBtn:SetScript("OnLeave", HideGrid)
+friendBtn:SetScript("OnLeave", function() ScheduleHide() end)
 
 guildBtn:SetScript("OnMouseUp", function(_, btn)
   if bar.__msbMoving then return end
