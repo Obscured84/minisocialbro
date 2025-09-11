@@ -11,8 +11,9 @@ local function CloneTable(t)
 end
 
 local defaults = {
-  pos = nil,
-  width = 300,
+  pos = nil,               -- legacy (relativ)
+  posAbs = nil,            -- absolut zu UIParent
+  width = 250,
   height = 20,
   scale = 1.0,
   bgAlpha = 0.75,
@@ -24,11 +25,11 @@ local defaults = {
 
   tooltip = { colName = 160, colZone = 150, colLvl = 34, colNote = 180, maxRows = 18 },
   zebra   = true,
-  tipDown = true,    -- true = klappt nach unten auf
-  tipTop  = true,    -- true = TOOLTIP-Strata (topmost)
-  compact = true,    -- kompaktere Zeilen
-  showNote = true,   -- Notizspalte anzeigen
-  noteType = "public", -- "public" oder "officer"
+  tipDown = true,
+  tipTop  = true,
+  compact = true,
+  showNote = true,
+  noteType = "public",
 }
 
 local function ApplyDefaults()
@@ -39,7 +40,7 @@ local function ApplyDefaults()
   end
 end
 
--- MIGRATION: füllt fehlende Keys aus alten Versionen
+-- MIGRATION
 local function MigrateDB()
   ApplyDefaults()
   MiniSocialBroDB.tooltip = MiniSocialBroDB.tooltip or {}
@@ -154,13 +155,8 @@ local function GetFriendRows()
   return online, rows
 end
 
--- ===================== Bar UI =====================
-local function SaveBarPosition()
-  local p,rel,rp,x,y = MiniSocialBroBar:GetPoint(1)
-  MiniSocialBroDB.pos = {p=p, rel=rel and rel:GetName() or "Minimap", rp=rp, x=x, y=y}
-end
-
-local parent = Minimap
+-- ===================== Bar UI / Position =====================
+local parent = UIParent
 local bar = CreateFrame("Button","MiniSocialBroBar", parent, "BackdropTemplate")
 bar:SetClampedToScreen(true)
 bar:SetFrameStrata("MEDIUM")
@@ -197,7 +193,47 @@ local friendText = MakeFont(friendBtn, defaults.fontSize)
 guildText:SetPoint("CENTER"); friendText:SetPoint("CENTER")
 guildBtn:SetHitRectInsets(-6,-6,-4,-4); friendBtn:SetHitRectInsets(-6,-6,-4,-4)
 
--- Alt-Drag per Drag-Events
+-- Absolute Position speichern
+local function SaveBarPositionAbs()
+  local l = bar:GetLeft()
+  local b = bar:GetBottom()
+  if l and b then
+    MiniSocialBroDB.posAbs = { point = "BOTTOMLEFT", x = l, y = b }
+  end
+end
+local function SaveBarPosition() SaveBarPositionAbs() end
+
+local function AnchorDefaultUnderMinimap()
+  bar:ClearAllPoints()
+  bar:SetPoint("TOP", Minimap, "BOTTOM", 0, -6)
+  C_Timer.After(0.02, SaveBarPositionAbs)
+end
+
+local function MigrateLegacyPosToAbs()
+  if MiniSocialBroDB.posAbs then return end
+  local pos = MiniSocialBroDB.pos
+  if pos and pos.rel then
+    bar:ClearAllPoints()
+    local rel = _G[pos.rel] or UIParent
+    bar:SetPoint(pos.p or "TOP", rel, pos.rp or "BOTTOM", pos.x or 0, pos.y or 0)
+    C_Timer.After(0.02, function()
+      SaveBarPositionAbs()
+      MiniSocialBroDB.pos = nil
+    end)
+  end
+end
+
+local function RestorePosition()
+  bar:ClearAllPoints()
+  local pa = MiniSocialBroDB.posAbs
+  if pa and pa.x and pa.y then
+    bar:SetPoint(pa.point or "BOTTOMLEFT", UIParent, "BOTTOMLEFT", pa.x, pa.y)
+  else
+    AnchorDefaultUnderMinimap()
+  end
+end
+
+-- Alt-Drag
 bar:RegisterForDrag("LeftButton")
 bar:SetScript("OnDragStart", function(self, button)
   if button == "LeftButton" and IsAltKeyDown() then
@@ -209,14 +245,14 @@ bar:SetScript("OnDragStop", function(self)
   if self.__msbMoving then
     self.__msbMoving = false
     self:StopMovingOrSizing()
-    SaveBarPosition()
+    SaveBarPositionAbs()
   end
 end)
 bar:SetScript("OnHide", function(self)
   if self.__msbMoving then
     self.__msbMoving = false
     self:StopMovingOrSizing()
-    SaveBarPosition()
+    SaveBarPositionAbs()
   end
 end)
 
@@ -233,16 +269,6 @@ local function ForwardAltDrag(btn)
 end
 ForwardAltDrag(guildBtn)
 ForwardAltDrag(friendBtn)
-
-local function RestorePosition()
-  local pos = MiniSocialBroDB.pos
-  bar:ClearAllPoints()
-  if pos and pos.rel then
-    bar:SetPoint(pos.p or "TOP", _G[pos.rel] or Minimap, pos.rp or "BOTTOM", pos.x or 0, pos.y or -6)
-  else
-    bar:SetPoint("TOP", parent, "BOTTOM", 0, -6)
-  end
-end
 
 local function Colorize(label, value)
   local lc = MiniSocialBroDB.labelColor or defaults.labelColor
@@ -288,13 +314,21 @@ grid:SetBackdrop({
 grid:SetBackdropColor(0, 0, 0, 0.90)
 grid:SetBackdropBorderColor(0.9, 0.9, 1, 0.12)
 grid:Hide()
-grid:EnableMouse(true)   -- wichtig: Grid fängt Maus-Events
+grid:EnableMouse(true)
 
 local function ApplyTooltipStrata()
   if MiniSocialBroDB.tipTop then
     grid:SetFrameStrata("TOOLTIP"); grid:SetFrameLevel(100)
   else
     grid:SetFrameStrata("HIGH"); grid:SetFrameLevel(10)
+  end
+end
+
+local function RaiseGameTooltip()
+  if GameTooltip then
+    GameTooltip:SetFrameStrata("TOOLTIP")
+    local gl = grid:GetFrameLevel() or 10
+    GameTooltip:SetFrameLevel(math.max(gl + 10, 200))
   end
 end
 
@@ -312,13 +346,64 @@ hName:SetText("Name"); hZone:SetText("Zone"); hLvl:SetText("Lv"); hNote:SetText(
 
 local hint = grid:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
 hint:SetDrawLayer("OVERLAY", 1)
-hint:SetText("|cffffffffLeft: Whisper   Right: Invite   Alt+Drag: Move|r")
+hint:SetText("|cffffffffLeft: Whisper   Right: Invite   Alt+Left: Move|r")
 
-local scroll = CreateFrame("ScrollFrame", nil, grid, "UIPanelScrollFrameTemplate")
+local scroll = CreateFrame("ScrollFrame", "MiniSocialBroScroll", grid, "UIPanelScrollFrameTemplate")
 local content = CreateFrame("Frame", nil, scroll)
 scroll:SetScrollChild(content)
 content:SetSize(10,10)
 scroll:EnableMouse(true)
+
+-- ScrollBar Referenz + Skin
+local sb = scroll.ScrollBar or _G[(scroll:GetName() or "") .. "ScrollBar"]
+local function SkinScrollBar()
+  if not sb then return end
+  sb:ClearAllPoints()
+  sb:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -6, -36)   -- unter Header
+  sb:SetPoint("BOTTOMRIGHT", grid, "BOTTOMRIGHT", -6, 22) -- über Hint
+  sb:SetWidth(16)
+  if sb.ScrollUpButton then sb.ScrollUpButton:Hide() end
+  if sb.ScrollDownButton then sb.ScrollDownButton:Hide() end
+  if sb.Background then sb.Background:Hide() end
+  if sb.Track and sb.Track.Background then sb.Track.Background:Hide() end
+end
+SkinScrollBar()
+
+-- Scroll-Clamping & Sync
+local function RecalcScroll()
+  scroll:UpdateScrollChildRect()
+  local max = math.max(0, scroll:GetVerticalScrollRange())
+  local cur = math.min(max, scroll:GetVerticalScroll())
+  scroll:SetVerticalScroll(cur)
+  if sb and sb.SetMinMaxValues then sb:SetMinMaxValues(0, max) end
+  if sb and sb.SetValue then sb:SetValue(cur) end
+  if sb and sb.SetShown then sb:SetShown(max > 1) end
+end
+
+scroll:SetScript("OnScrollRangeChanged", function(self, xrange, yrange)
+  local max = yrange or self:GetVerticalScrollRange()
+  if sb and sb.SetMinMaxValues then sb:SetMinMaxValues(0, max) end
+  if self:GetVerticalScroll() > max then self:SetVerticalScroll(max) end
+  if sb and sb.SetValue then sb:SetValue(self:GetVerticalScroll()) end
+  if sb and sb.SetShown then sb:SetShown(max > 1) end
+end)
+
+if sb and not sb.__msb_hooked then
+  sb:SetScript("OnValueChanged", function(_, value)
+    local max = scroll:GetVerticalScrollRange()
+    local v = math.min(max, math.max(0, value or 0))
+    scroll:SetVerticalScroll(v)
+  end)
+  sb.__msb_hooked = true
+end
+
+scroll:SetScript("OnMouseWheel", function(self, delta)
+  local step = MiniSocialBroDB.compact and 14 or 16
+  local max = self:GetVerticalScrollRange()
+  local new = math.min(max, math.max(0, self:GetVerticalScroll() - delta*step))
+  self:SetVerticalScroll(new)
+  if sb and sb.SetValue then sb:SetValue(new) end
+end)
 
 local rowsFS = {}
 
@@ -345,7 +430,7 @@ local function AcquireRow(i)
       if MiniSocialBroBar.__msbMoving then
         MiniSocialBroBar.__msbMoving = false
         MiniSocialBroBar:StopMovingOrSizing()
-        SaveBarPosition()
+        SaveBarPositionAbs()
         return
       end
       local target = self.charName
@@ -367,8 +452,7 @@ local function AcquireRow(i)
 end
 
 grid:SetScript("OnMouseWheel", function(self, delta)
-  local step = MiniSocialBroDB.compact and 14 or 16
-  scroll:SetVerticalScroll(math.max(0, scroll:GetVerticalScroll() - delta*step))
+  scroll:GetScript("OnMouseWheel")(scroll, delta)
 end)
 
 -- Sticky-hide helpers
@@ -393,7 +477,6 @@ local function ShowGrid(anchor, title, rows)
   local cfg = MiniSocialBroDB.tooltip
   local showNote = MiniSocialBroDB.showNote
 
-  -- Fallbacks für alte/kaputte Werte
   local col1 = cfg.colName or 160
   local col2 = cfg.colZone or 150
   local col3 = cfg.colLvl  or 34
@@ -440,9 +523,9 @@ local function ShowGrid(anchor, title, rows)
     -- Spalten
     r.name:ClearAllPoints(); r.zone:ClearAllPoints(); r.lvl:ClearAllPoints(); r.note:ClearAllPoints()
     r.name:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(i-1)*rowH)
-    r.zone:SetPoint("LEFT", r.name, "RIGHT", gap, 0)
-    r.lvl:SetPoint("LEFT", r.zone, "RIGHT", gap, 0)
-    if showNote then r.note:SetPoint("LEFT", r.lvl, "RIGHT", gap, 0) end
+    r.zone:SetPoint("LEFT", r.name, "RIGHT", 8, 0)
+    r.lvl:SetPoint("LEFT", r.zone, "RIGHT", 8, 0)
+    if showNote then r.note:SetPoint("LEFT", r.lvl, "RIGHT", 8, 0) end
 
     r.name:SetWidth(col1);  r.name:SetJustifyH("LEFT")
     r.zone:SetWidth(col2);  r.zone:SetJustifyH("LEFT")
@@ -472,8 +555,8 @@ local function ShowGrid(anchor, title, rows)
       GameTooltip:AddLine(self.charName, 0.9, 0.9, 1)
       GameTooltip:AddLine("Left: Whisper", 1,1,1)
       GameTooltip:AddLine("Right: Invite", 1,1,1)
-      GameTooltip:AddLine("Alt+Drag: Move bar", 1,1,1)
       GameTooltip:Show()
+      RaiseGameTooltip()
       if MiniSocialBroDB.zebra then
         self.bg:SetColorTexture(1, 1, 1, 0.18)
       else
@@ -503,14 +586,20 @@ local function ShowGrid(anchor, title, rows)
 
   content:SetSize(totalW, #rows * rowH)
 
+  -- Scrollframe: innen verankern und rechts Platz für Scrollbar
   scroll:ClearAllPoints()
   scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -6)
-  scroll:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -10, -38)
+  if sb then
+    scroll:SetPoint("TOPRIGHT", sb, "TOPLEFT", -4, 0)
+  else
+    scroll:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -26, -38) -- Fallback
+  end
+
   local visibleH = math.min(#rows, maxRows) * rowH + 2
   scroll:SetHeight(visibleH)
 
   local w = pad + totalW + pad
-  local h = 40 + 6 + visibleH + 14 + 12 -- +hintH
+  local h = 40 + 6 + visibleH + 14 + 12 -- +hint
   grid:SetSize(w, h)
 
   hint:ClearAllPoints()
@@ -524,6 +613,9 @@ local function ShowGrid(anchor, title, rows)
     grid:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 6)
   end
   ApplyTooltipStrata()
+
+  SkinScrollBar()
+  RecalcScroll()
   grid:Show()
 end
 
@@ -564,14 +656,14 @@ end)
 
 -- ===================== Minimap Button (native) + LDB/LibDBIcon =====================
 local function GetAddonIconTexture()
-  return "Interface\\AddOns\\MiniSocialBro\\media\\msb_raven"
+  return "Interface\\AddOns\\MiniSocialBro\\media\\msb_logo_64"  -- LibDBIcon/Minimap
 end
 
 local LDB = _G.LibStub and _G.LibStub("LibDataBroker-1.1", true)
 local LDI = _G.LibStub and _G.LibStub("LibDBIcon-1.0", true)
 local ldbObj
 
-local function LDB_OnClick(frame, button)
+local function LDB_OnClick(_, button)
   if button == "LeftButton" then
     MiniSocialBroDB.locked = not MiniSocialBroDB.locked
     print(("|cff66aaffMiniSocialBro|r %s"):format(MiniSocialBroDB.locked and "locked" or "unlocked"))
@@ -587,6 +679,8 @@ local function LDB_OnTooltip(tt)
   tt:AddLine("Left: Lock/Unlock Bar", 1,1,1)
   tt:AddLine("Right: Friends", 1,1,1)
   tt:AddLine("Middle: Communities/Guild", 1,1,1)
+  tt:AddLine("Alt+Left auf der Leiste: Move", 1,1,1)
+
 end
 
 local function RegisterLDB()
@@ -604,7 +698,7 @@ local function RegisterLDB()
   end
 end
 
--- Fallback: eigener Minimap-Button (falls keine Libs)
+-- Fallback: eigener Minimap-Button
 local mmb = CreateFrame("Button","MiniSocialBroMMB", Minimap)
 mmb:SetSize(26,26)
 mmb:SetParent(Minimap)
@@ -637,7 +731,7 @@ mmb:SetScript("OnDragStop", function()
   if bar.__msbMoving then
     bar.__msbMoving = false
     bar:StopMovingOrSizing()
-    SaveBarPosition()
+    SaveBarPositionAbs()
   end
 end)
 
@@ -673,6 +767,7 @@ ev:SetScript("OnEvent", function(_, event)
     safe(C_GuildInfo.GuildRoster)
     RegisterLDB()
     UpdateIconVisibility()
+    MigrateLegacyPosToAbs()
     if not MiniSocialBroTicker then
       MiniSocialBroTicker = C_Timer.NewTicker(30, function() UpdateTexts() end)
     end
@@ -745,7 +840,7 @@ SlashCmdList.MINISOCIALBRO = function(msg)
   elseif cmd == "lock" then MiniSocialBroDB.locked = true; print("|cff66aaffMiniSocialBro|r locked")
   elseif cmd == "unlock" then MiniSocialBroDB.locked = false; print("|cff66aaffMiniSocialBro|r unlocked (Alt-Drag am Balken oder Drag am Minimap-Icon)")
   elseif cmd == "reset" then
-    MiniSocialBroDB = {}; ApplyDefaults(); MigrateDB(); RestorePosition(); Layout(); UpdateTexts(); ApplyTooltipStrata()
+    MiniSocialBroDB = {}; ApplyDefaults(); MigrateDB(); AnchorDefaultUnderMinimap(); Layout(); UpdateTexts(); ApplyTooltipStrata()
   else
     print("|cff66aaffMiniSocialBro|r Befehle:")
     print("/msb width <px> | /msb height <px> | /msb scale <0.5-2> | /msb font <10-18> | /msb bg <0-1>")

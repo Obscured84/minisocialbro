@@ -1,8 +1,8 @@
 ## Interface: 110200
 ## Title: MiniSocialBro
-## Notes: Gilde & Freunde unter der Minimap; klickbare Tabellen; Sticky-Tooltip; Gildennotizen; LDB/LibDBIcon; Minimap-Icon; Alt-Drag; Kompaktmodus
+## Notes: Gilde & Freunde unter der Minimap; klickbare Tabellen; Sticky-Tooltip; Gildennotizen; LDB/LibDBIcon; Minimap-Icon; Alt-Drag; Kompaktmodus; stabile Positionsspeicherung; saubere Scrollbar
 ## Author: Obscured
-## Version: 1.6.3
+## Version: 1.6.5
 ## SavedVariables: MiniSocialBroDB, MiniSocialBroIconDB
 ## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0
 ## IconTexture: Interface\AddOns\MiniSocialBro\media\msb_raven
