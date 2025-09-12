@@ -1,0 +1,25 @@
+name: Package & Release
+
+on:
+  push:
+    tags:
+      - "v1.6.5"          # z.B. v1.6.5
+  workflow_dispatch:   # optional: manuell auslösen
+
+permissions:
+  contents: write      # damit der Packager Release-Assets anhängen darf
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # wichtig für Changelog/Version
+
+      - name: WoW Packager
+        uses: BigWigsMods/packager@v2.4.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # kommt von GitHub automatisch
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}  # legst du als Secret an
