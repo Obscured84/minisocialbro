@@ -3,11 +3,11 @@ name: Package & Release
 on:
   push:
     tags:
-      - "v1.6.5"          # z.B. v1.6.5
-  workflow_dispatch:   # optional: manuell auslösen
+      - "v1.6.5"             # z.B. v1.6.5
+  workflow_dispatch:      # optional: manuell starten
 
 permissions:
-  contents: write      # damit der Packager Release-Assets anhängen darf
+  contents: write         # Release-Assets anhängen dürfen
 
 jobs:
   build:
@@ -16,10 +16,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # wichtig für Changelog/Version
+          fetch-depth: 0   # Changelog/Version
 
+      # Falls noch kein Release existiert (oder UI-Release ohne Asset): erstellen
+      - name: Create GitHub Release (if missing)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # BigWigs Packager: baut ZIP, hängt als Asset an und pusht zu Wago
       - name: WoW Packager
         uses: BigWigsMods/packager@v2.4.3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # kommt von GitHub automatisch
-          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}  # legst du als Secret an
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}   # 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # 
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}  # 
