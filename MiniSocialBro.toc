@@ -1,6 +1,7 @@
 ## Interface: 110200
 ## Title: MiniSocialBro
-## Notes: Gilde & Freunde unter der Minimap; klickbare Tabellen; Sticky-Tooltip; Gildennotizen; LDB/LibDBIcon; Minimap-Icon; Alt-Drag; Kompaktmodus; stabile Positionsspeicherung; saubere Scrollbar
+## Notes: Gilde & Freunde unter der Minimap; klickbare Tabellen; Sticky-Tooltip; Gildennotizen; LDB/LibDBIcon; Minimap-Icon; Alt-Drag; Kompaktmodus; 
+## X-Wago-ID: qKQxzy6x
 ## Author: Obscured
 ## Version: 1.6.5
 ## SavedVariables: MiniSocialBroDB, MiniSocialBroIconDB
@@ -8,3 +9,4 @@
 ## IconTexture: Interface\AddOns\MiniSocialBro\media\msb_raven
 
 MiniSocialBro.lua
+
