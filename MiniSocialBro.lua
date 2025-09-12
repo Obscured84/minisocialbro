@@ -13,7 +13,7 @@ end
 local defaults = {
   pos = nil,               -- legacy (relativ)
   posAbs = nil,            -- absolut zu UIParent
-  width = 250,
+  width = 200,
   height = 20,
   scale = 1.0,
   bgAlpha = 0.75,
@@ -851,3 +851,4 @@ SlashCmdList.MINISOCIALBRO = function(msg)
     print("/msb lock | /msb unlock | /msb reset")
   end
 end
+
