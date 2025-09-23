@@ -13,7 +13,7 @@ end
 local defaults = {
   pos = nil,               -- legacy (relativ)
   posAbs = nil,            -- absolut zu UIParent
-  width = 250,
+  width = 300,
   height = 20,
   scale = 1.0,
   bgAlpha = 0.75,
@@ -80,36 +80,78 @@ local function FitText(fs, text, maxW)
   fs:SetText(best)
 end
 
+-- Gibt eine gekürzte Variante zurück (für farbcodierte Namen)
+local function TruncateText(fs, text, maxW)
+  if not text or text == "" then return "" end
+  fs:SetText(text)
+  if fs:GetStringWidth() <= maxW then return text end
+  local ell = "…"
+  local lo, hi = 1, #text
+  local best = ""
+  while lo <= hi do
+    local mid = math.floor((lo+hi)/2)
+    local t = string.sub(text, 1, mid)..ell
+    fs:SetText(t)
+    if fs:GetStringWidth() <= maxW then
+      best = t; lo = mid + 1
+    else
+      hi = mid - 1
+    end
+  end
+  return best
+end
+
 -- ===================== Data helpers =====================
+-- Sanitized Realmtag (für Chat/Whisper, entfernt Spaces, Punkte usw.)
+local function SanitizeRealm(r)
+  if not r then return "" end
+  return (r:gsub("[%s%-%.'`´]", "")) -- Spaces, Bindestriche, Punkte, Akzente raus
+end
+
+-- Lokalisierte Klassenbezeichnung -> Token (WARRIOR, MAGE, ...)
+local function TokenFromLocalizedClass(localized)
+  if not localized or localized == "" then return nil end
+  for token, name in pairs(LOCALIZED_CLASS_NAMES_MALE or {}) do
+    if name == localized then return token end
+  end
+  for token, name in pairs(LOCALIZED_CLASS_NAMES_FEMALE or {}) do
+    if name == localized then return token end
+  end
+  return nil
+end
+
 local function NormalizeCharRealm(char, realm)
   if not char or char == "" then return nil end
   local c = char:gsub("|c%x%x%x%x%x%x%x%x",""):gsub("|r","")
   if realm and realm ~= "" then
+    local tag = SanitizeRealm(realm)
     local low = c:lower()
-    local rr = realm:lower():gsub("%s+","")
-    if not low:match("%-"..rr.."$") then c = c.."-"..realm end
-    local pat = "%-"..realm:gsub("(%W)","%%%1")
-    while c:lower():find(("-"..rr.."-"..rr):gsub("%-","%%-")) do
-      c = c:gsub(pat..pat, "-"..realm)
+    if not low:match("%-"..tag:lower().."$") then c = c.."-"..tag end
+    local pat = "%-"..tag:gsub("(%W)","%%%1")
+    while c:lower():find(("-"..tag.."-"..tag):lower():gsub("(%W)","%%%1")) do
+      c = c:gsub(pat..pat, "-"..tag)
     end
   end
   return c
 end
 
+-- ===================== Rows =====================
 local function GetGuildRows()
   local rows, online = {}, 0
   if IsInGuild() then
     safe(C_GuildInfo.GuildRoster)
     local total = GetNumGuildMembers() or 0
     for i=1,total do
-      local name, _, _, level, _, zone, publicNote, officerNote, isOnline = GetGuildRosterInfo(i)
+      local name, _, _, level, classDisplayName, zone, publicNote, officerNote, isOnline, _, classFile = GetGuildRosterInfo(i)
       if isOnline and name then
         online = online + 1
         rows[#rows+1] = {
           name  = name,
           zone  = zone or "",
           level = level or 0,
-          note  = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or "")
+          note  = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or ""),
+          class = classFile or TokenFromLocalizedClass(classDisplayName),
+          bnetID = nil,   -- Gilde ist nie BN-Whisper
         }
       end
     end
@@ -122,6 +164,7 @@ local function GetFriendRows()
   local rows, online = {}, 0
   local seen = {}
 
+  -- Normale (WoW-)Freunde
   local num = C_FriendList.GetNumFriends() or 0
   for i=1,num do
     local info = C_FriendList.GetFriendInfoByIndex(i)
@@ -130,22 +173,40 @@ local function GetFriendRows()
       if name and not seen[name] then
         seen[name] = true
         online = online + 1
-        rows[#rows+1] = { name = name, zone = info.area or "", level = info.level or 0, note = "" }
+        local token = TokenFromLocalizedClass(info.className)
+        rows[#rows+1] = { name = name, zone = info.area or "", level = info.level or 0, note = "", class = token, bnetID = nil }
       end
     end
   end
 
+  -- Battle.net Freunde (nur WoW-Client)
   local bnum = BNGetNumFriends() or 0
   for i=1,bnum do
     local acct = C_BattleNet.GetFriendAccountInfo(i)
     if acct and acct.gameAccountInfo then
       local g = acct.gameAccountInfo
       if g.isOnline and g.clientProgram == "WoW" then
-        local nm = NormalizeCharRealm(g.characterName or acct.accountName, g.realmName)
+        local realmTag = SanitizeRealm(g.realmName or "")
+        local nm = NormalizeCharRealm(g.characterName or acct.accountName, realmTag)
         if nm and not seen[nm] then
           seen[nm] = true
           online = online + 1
-          rows[#rows+1] = { name = nm, zone = g.areaName or "", level = g.characterLevel or 0, note = "" }
+          local token
+          if g.classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
+            local ci = C_CreatureInfo.GetClassInfo(g.classID)
+            token = ci and ci.classFile or nil
+          end
+          if not token then token = TokenFromLocalizedClass(g.className) end
+          rows[#rows+1] = {
+            name  = nm,
+            zone  = g.areaName or "",
+            level = g.characterLevel or 0,
+            note  = "",
+            class = token,
+            bnetID = acct.bnetAccountID,   -- wichtig für BN-Whisper
+            bnName = acct.accountName,          -- <--- NEU: für ChatFrame_SendBNetTell
+            project = g.wowProjectID,           -- optional
+          }
         end
       end
     end
@@ -174,8 +235,7 @@ end
 
 local accent = CreateFrame("StatusBar", nil, bar)
 accent:SetStatusBarTexture("Interface/Buttons/WHITE8x8")
-accent:SetMinMaxValues(0,1)
-accent:SetValue(1)
+accent:SetMinMaxValues(0,1); accent:SetValue(1)
 
 local function MakeFont(parent, size)
   local fs = parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
@@ -302,6 +362,35 @@ local function Layout()
   accent:SetShown(MiniSocialBroDB.accent)
 end
 
+-- ===================== BN Whisper helper =====================
+-- Öffnet einen BN-Whisper per Account-Name (schöner Header als "tell 48")
+local function OpenBNWhisper(bnetID, fallbackName)
+  -- Versuche erst den Account-Namen zu holen
+  local accName
+  if C_BattleNet and C_BattleNet.GetAccountInfoByID then
+    local info = C_BattleNet.GetAccountInfoByID(bnetID)
+    accName = info and info.accountName or fallbackName
+  else
+    accName = fallbackName
+  end
+
+  if accName and ChatFrame_SendBNetTell then
+    ChatFrame_SendBNetTell(accName)  -- öffnet BN-Whisper mit sauberem Header
+    return
+  end
+
+  -- Fallback: direkte ChatEdit-Attribute (zur Not zeigt’s die ID)
+  local editBox = ChatEdit_ChooseBoxForSend(DEFAULT_CHAT_FRAME)
+  if not editBox then return end
+  ChatEdit_ActivateChat(editBox)
+  editBox:SetAttribute("chatType", "BN_WHISPER")
+  -- Je nach Client-Version wird mal tellTarget, mal channelTarget ausgewertet:
+  editBox:SetAttribute("tellTarget", bnetID)
+  editBox:SetAttribute("channelTarget", bnetID)
+  ChatEdit_UpdateHeader(editBox)
+end
+
+
 -- ===================== Grid Tooltip (klickbar, sticky) =====================
 local grid = CreateFrame("Frame","MiniSocialBroTooltip", UIParent, "BackdropTemplate")
 grid:SetClampedToScreen(true)
@@ -416,6 +505,7 @@ local function AcquireRow(i)
     for _,fs in ipairs({name, zone, lvl, note}) do
       if fs.SetWordWrap then fs:SetWordWrap(false) end
       if fs.SetMaxLines then fs:SetMaxLines(1) end
+      if fs.SetJustifyV then fs:SetJustifyV("MIDDLE") end   -- <--- neu
     end
     local bg  = content:CreateTexture(nil, "BACKGROUND")
     local btn = CreateFrame("Button", nil, content)
@@ -426,25 +516,35 @@ local function AcquireRow(i)
         MiniSocialBroBar.__msbMoving = true
       end
     end)
-    btn:SetScript("OnMouseUp", function(self, button)
-      if MiniSocialBroBar.__msbMoving then
-        MiniSocialBroBar.__msbMoving = false
-        MiniSocialBroBar:StopMovingOrSizing()
-        SaveBarPositionAbs()
-        return
-      end
-      local target = self.charName
-      if not target or target == "" then return end
-      if button == "LeftButton" then
+   btn:SetScript("OnMouseUp", function(self, button)
+  if MiniSocialBroBar.__msbMoving then
+    MiniSocialBroBar.__msbMoving = false
+    MiniSocialBroBar:StopMovingOrSizing()
+    SaveBarPositionAbs()
+    return
+  end
+
+  local target = self.charName
+  if button == "LeftButton" then
+    if self.bnetID then
+      -- Nutze den Account-Namen, damit kein "tell 48" erscheint
+      OpenBNWhisper(self.bnetID, self.bnName)
+    else
+      if target and target ~= "" then
         ChatFrame_OpenChat("/w "..target.." ")
-      elseif button == "RightButton" then
-        if C_PartyInfo and C_PartyInfo.InviteUnit then
-          C_PartyInfo.InviteUnit(target)
-        else
-          InviteUnit(target)
-        end
       end
-    end)
+    end
+  elseif button == "RightButton" then
+    if target and target ~= "" then
+      if C_PartyInfo and C_PartyInfo.InviteUnit then
+        C_PartyInfo.InviteUnit(target)
+      else
+        InviteUnit(target)
+      end
+    end
+  end
+end)
+
 
     rowsFS[i] = { name=name, zone=zone, lvl=lvl, note=note, bg=bg, btn=btn }
   end
@@ -485,7 +585,6 @@ local function ShowGrid(anchor, title, rows)
   local pad  = 10
   local gap  = 8
   local rowH = MiniSocialBroDB.compact and 14 or 16
-  local hintH = 14
   local maxRows = cfg.maxRows or 18
 
   hName:ClearAllPoints(); hZone:ClearAllPoints(); hLvl:ClearAllPoints(); hNote:ClearAllPoints()
@@ -523,18 +622,28 @@ local function ShowGrid(anchor, title, rows)
     -- Spalten
     r.name:ClearAllPoints(); r.zone:ClearAllPoints(); r.lvl:ClearAllPoints(); r.note:ClearAllPoints()
     r.name:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(i-1)*rowH)
-    r.zone:SetPoint("LEFT", r.name, "RIGHT", 8, 0)
-    r.lvl:SetPoint("LEFT", r.zone, "RIGHT", 8, 0)
-    if showNote then r.note:SetPoint("LEFT", r.lvl, "RIGHT", 8, 0) end
+    r.zone:SetPoint("LEFT", r.name, "RIGHT", gap, 0)
+    r.lvl:SetPoint("LEFT", r.zone, "RIGHT", gap, 0)
+    if showNote then r.note:SetPoint("LEFT", r.lvl, "RIGHT", gap, 0) end
 
-    r.name:SetWidth(col1);  r.name:SetJustifyH("LEFT")
-    r.zone:SetWidth(col2);  r.zone:SetJustifyH("LEFT")
-    r.lvl:SetWidth(col3);   r.lvl:SetJustifyH("RIGHT")
-    r.note:SetWidth(col4);  r.note:SetJustifyH("LEFT"); r.note:SetShown(showNote)
+    r.name:SetWidth(col1);  r.name:SetJustifyH("LEFT"); r.name:SetHeight(rowH)
+    r.zone:SetWidth(col2);  r.zone:SetJustifyH("LEFT"); r.zone:SetHeight(rowH) 
+    r.lvl:SetWidth(col3);   r.lvl:SetJustifyH("RIGHT"); r.lvl:SetHeight(rowH)
+    r.note:SetWidth(col4);  r.note:SetJustifyH("LEFT");  r.note:SetHeight(rowH) r.note:SetShown(showNote)
 
     -- Texte
     local row = rows[i]
-    FitText(r.name, row.name or "", col1)
+
+    -- NAME farbig (Klassenfarbe) -> erst kürzen, dann einfärben
+    local plainName = TruncateText(r.name, row.name or "", col1)
+    if row.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[row.class] then
+      local c = RAID_CLASS_COLORS[row.class]
+      local colorStr = c.colorStr or string.format("FF%02X%02X%02X", (c.r*255), (c.g*255), (c.b*255))
+      r.name:SetText("|c"..colorStr..plainName.."|r")
+    else
+      r.name:SetText(plainName)
+    end
+
     FitText(r.zone, row.zone or "", col2)
     r.lvl:SetText(row.level and tostring(row.level) or "")
     if showNote then
@@ -547,6 +656,8 @@ local function ShowGrid(anchor, title, rows)
     r.btn:SetSize(totalW + 4, rowH)
     r.btn.bg = r.bg
     r.btn.charName = row.name or ""
+    r.btn.bnetID   = row.bnetID  -- wichtig: BN-Whisper
+    r.btn.bnName   = row.bnName 
 
     r.btn:SetScript("OnEnter", function(self)
       CancelHide()
@@ -581,7 +692,7 @@ local function ShowGrid(anchor, title, rows)
   for i=#rows+1, #rowsFS do
     rowsFS[i].name:Hide(); rowsFS[i].zone:Hide(); rowsFS[i].lvl:Hide(); rowsFS[i].note:Hide()
     if rowsFS[i].bg then rowsFS[i].bg:SetColorTexture(0,0,0,0) end
-    if rowsFS[i].btn then rowsFS[i].btn:ClearAllPoints(); rowsFS[i].btn:SetSize(1,1); rowsFS[i].btn.charName = nil end
+    if rowsFS[i].btn then rowsFS[i].btn:ClearAllPoints(); rowsFS[i].btn:SetSize(1,1); rowsFS[i].btn.charName = nil; rowsFS[i].btn.bnetID = nil end
   end
 
   content:SetSize(totalW, #rows * rowH)
@@ -599,7 +710,7 @@ local function ShowGrid(anchor, title, rows)
   scroll:SetHeight(visibleH)
 
   local w = pad + totalW + pad
-  local h = 40 + 6 + visibleH + 14 + 12 -- +hint
+  local h = 40 + 6 + visibleH + 14 + 12
   grid:SetSize(w, h)
 
   hint:ClearAllPoints()
@@ -656,7 +767,7 @@ end)
 
 -- ===================== Minimap Button (native) + LDB/LibDBIcon =====================
 local function GetAddonIconTexture()
-  return "Interface\\AddOns\\MiniSocialBro\\media\\msb_logo_64"  -- LibDBIcon/Minimap
+  return "Interface\\AddOns\\MiniSocialBro\\media\\msb_logo_64"
 end
 
 local LDB = _G.LibStub and _G.LibStub("LibDataBroker-1.1", true)
@@ -679,8 +790,6 @@ local function LDB_OnTooltip(tt)
   tt:AddLine("Left: Lock/Unlock Bar", 1,1,1)
   tt:AddLine("Right: Friends", 1,1,1)
   tt:AddLine("Middle: Communities/Guild", 1,1,1)
-  tt:AddLine("Alt+Left auf der Leiste: Move", 1,1,1)
-
 end
 
 local function RegisterLDB()
@@ -842,7 +951,7 @@ SlashCmdList.MINISOCIALBRO = function(msg)
   elseif cmd == "reset" then
     MiniSocialBroDB = {}; ApplyDefaults(); MigrateDB(); AnchorDefaultUnderMinimap(); Layout(); UpdateTexts(); ApplyTooltipStrata()
   else
-    print("|cff66aaffMiniSocialBro|r Befehle:")
+    print("|cff66aaffMiniSocialBro|r Commands:")
     print("/msb width <px> | /msb height <px> | /msb scale <0.5-2> | /msb font <10-18> | /msb bg <0-1>")
     print("/msb accent on|off | /msb color label r g b | /msb color value r g b")
     print("/msb cols <name> <zone> <lvl> [note] | /msb rows <8-30> | /msb zebra on|off | /msb compact on|off")

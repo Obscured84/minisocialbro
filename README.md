@@ -6,7 +6,7 @@ Click a player: **Left = whisper**, **Right = invite**. **Alt+Left** on the bar 
 
 > **Author:** Obscured • **Game UI:** Retail 11.0.x / Interface 110200+ • **Optional:** LibDataBroker-1.1, LibDBIcon-1.0
 
-![MiniSocialBro logo](media/msb_logo_preview_512.png)
+GG & Thx to Bluki
 
 ---
 
@@ -214,7 +214,10 @@ PRs welcome. Keep changes small and focused. For features:
 ---
 
 ## Changelog
-
+### 1.6.6
+- Added Class Colors
+- Fixed Layout in Rows
+- Fixed BNet Friends Whisper
 ### 1.6.5
 - Scrollbar anchored inside the tooltip, synchronized with the scroll frame, overscroll clamped
 - Sticky tooltip navigation across header/rows
