@@ -31,6 +31,20 @@ local defaults = {
   showNote = true,
   noteType = "public",
 }
+-- Präsenz aus Flags ableiten
+local function PresenceFromFlags(isDND, isAFK)
+  if isDND then return "DND" end
+  if isAFK then return "AFK" end
+  return "ONLINE"
+end
+
+-- Blizzard-Status-Icons
+local PRES_ICONS = {
+  ONLINE = "Interface\\FriendsFrame\\StatusIcon-Online",
+  AFK    = "Interface\\FriendsFrame\\StatusIcon-Away",
+  DND    = "Interface\\FriendsFrame\\StatusIcon-DnD",
+}
+
 
 local function ApplyDefaults()
   for k,v in pairs(defaults) do
@@ -138,27 +152,29 @@ end
 -- ===================== Rows =====================
 local function GetGuildRows()
   local rows, online = {}, 0
-  if IsInGuild() then
-    safe(C_GuildInfo.GuildRoster)
-    local total = GetNumGuildMembers() or 0
-    for i=1,total do
-      local name, _, _, level, classDisplayName, zone, publicNote, officerNote, isOnline, _, classFile = GetGuildRosterInfo(i)
-      if isOnline and name then
-        online = online + 1
-        rows[#rows+1] = {
-          name  = name,
-          zone  = zone or "",
-          level = level or 0,
-          note  = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or ""),
-          class = classFile or TokenFromLocalizedClass(classDisplayName),
-          bnetID = nil,   -- Gilde ist nie BN-Whisper
-        }
-      end
+  if not IsInGuild() then return 0, rows end
+
+  safe(C_GuildInfo.GuildRoster)  -- <--- wichtig, damit die Daten aktuell sind
+
+  local total = GetNumGuildMembers() or 0
+  for i=1,total do
+    local name, _, _, level, classDisplayName, zone, publicNote, officerNote, isOnline, status, classFile =
+      GetGuildRosterInfo(i)
+    if isOnline and name then
+      local pres = (status == 2 and "DND") or (status == 1 and "AFK") or "ONLINE"
+      online = online + 1
+      rows[#rows+1] = {
+        name = name, zone = zone or "", level = level or 0,
+        note = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or ""),
+        class = classFile or TokenFromLocalizedClass(classDisplayName),
+        presence = pres, bnetID = nil,
+      }
     end
   end
   table.sort(rows, function(a,b) return a.name < b.name end)
   return online, rows
 end
+
 
 local function GetFriendRows()
   local rows, online = {}, 0
@@ -174,7 +190,8 @@ local function GetFriendRows()
         seen[name] = true
         online = online + 1
         local token = TokenFromLocalizedClass(info.className)
-        rows[#rows+1] = { name = name, zone = info.area or "", level = info.level or 0, note = "", class = token, bnetID = nil }
+        local pres = PresenceFromFlags(info.dnd, info.afk)
+        rows[#rows+1] = { name = name, zone = info.area or "", level = info.level or 0, note = "", class = token, presence = pres, bnetID = nil }
       end
     end
   end
@@ -197,6 +214,7 @@ local function GetFriendRows()
             token = ci and ci.classFile or nil
           end
           if not token then token = TokenFromLocalizedClass(g.className) end
+          local pres = PresenceFromFlags(acct.isDND, acct.isAFK)
           rows[#rows+1] = {
             name  = nm,
             zone  = g.areaName or "",
@@ -206,6 +224,7 @@ local function GetFriendRows()
             bnetID = acct.bnetAccountID,   -- wichtig für BN-Whisper
             bnName = acct.accountName,          -- <--- NEU: für ChatFrame_SendBNetTell
             project = g.wowProjectID,           -- optional
+            presence = pres,
           }
         end
       end
@@ -502,6 +521,7 @@ local function AcquireRow(i)
     local zone = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     local lvl  = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     local note = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    
     for _,fs in ipairs({name, zone, lvl, note}) do
       if fs.SetWordWrap then fs:SetWordWrap(false) end
       if fs.SetMaxLines then fs:SetMaxLines(1) end
@@ -545,8 +565,10 @@ local function AcquireRow(i)
   end
 end)
 
+local pres = content:CreateTexture(nil, "ARTWORK")
+pres:SetSize(12, 12)
+rowsFS[i] = { name=name, zone=zone, lvl=lvl, note=note, bg=bg, btn=btn, pres=pres }
 
-    rowsFS[i] = { name=name, zone=zone, lvl=lvl, note=note, bg=bg, btn=btn }
   end
   return rowsFS[i]
 end
@@ -605,6 +627,8 @@ local function ShowGrid(anchor, title, rows)
   local totalW = col1 + gap + col2 + gap + col3 + (showNote and (gap + col4) or 0)
   header:SetWidth(totalW)
 
+    local iconPad = 14  -- 12px Icon + 2px Luft
+
   for i=1,#rows do
     local r = AcquireRow(i)
     r.btn.index = i
@@ -619,23 +643,41 @@ local function ShowGrid(anchor, title, rows)
       r.bg:SetColorTexture(0, 0, 0, 0)
     end
 
-    -- Spalten
-    r.name:ClearAllPoints(); r.zone:ClearAllPoints(); r.lvl:ClearAllPoints(); r.note:ClearAllPoints()
-    r.name:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(i-1)*rowH)
-    r.zone:SetPoint("LEFT", r.name, "RIGHT", gap, 0)
-    r.lvl:SetPoint("LEFT", r.zone, "RIGHT", gap, 0)
-    if showNote then r.note:SetPoint("LEFT", r.lvl, "RIGHT", gap, 0) end
+    -- Zeilenmitte + Spalten-X
+    local rowCenterY = -(i-1)*rowH - (rowH/2)
+    local x1 = iconPad
+    local x2 = col1 + gap
+    local x3 = col1 + gap + col2 + gap
+    local x4 = col1 + gap + col2 + gap + col3 + gap
 
-    r.name:SetWidth(col1);  r.name:SetJustifyH("LEFT"); r.name:SetHeight(rowH)
-    r.zone:SetWidth(col2);  r.zone:SetJustifyH("LEFT"); r.zone:SetHeight(rowH) 
-    r.lvl:SetWidth(col3);   r.lvl:SetJustifyH("RIGHT"); r.lvl:SetHeight(rowH)
-    r.note:SetWidth(col4);  r.note:SetJustifyH("LEFT");  r.note:SetHeight(rowH) r.note:SetShown(showNote)
+    -- Spalten vertikal mittig ankern
+    r.name:ClearAllPoints(); r.zone:ClearAllPoints(); r.lvl:ClearAllPoints(); r.note:ClearAllPoints()
+    r.name:SetPoint("LEFT", content, "TOPLEFT", x1, rowCenterY)
+    r.zone:SetPoint("LEFT", content, "TOPLEFT", x2, rowCenterY)
+    r.lvl:SetPoint( "LEFT", content, "TOPLEFT", x3, rowCenterY)
+    if showNote then r.note:SetPoint("LEFT", content, "TOPLEFT", x4, rowCenterY) end
+
+    -- Breiten/Höhen + Ausrichtung
+    r.name:SetWidth(col1 - iconPad); r.name:SetHeight(rowH); r.name:SetJustifyH("LEFT");  if r.name.SetJustifyV then r.name:SetJustifyV("MIDDLE") end
+    r.zone:SetWidth(col2);           r.zone:SetHeight(rowH); r.zone:SetJustifyH("LEFT");  if r.zone.SetJustifyV then r.zone:SetJustifyV("MIDDLE") end
+    r.lvl:SetWidth(col3);            r.lvl:SetHeight(rowH);  r.lvl:SetJustifyH("RIGHT"); if r.lvl.SetJustifyV  then r.lvl:SetJustifyV("MIDDLE")  end
+    r.note:SetWidth(col4);           r.note:SetHeight(rowH); r.note:SetJustifyH("LEFT");  if r.note.SetJustifyV then r.note:SetJustifyV("MIDDLE") end
+    r.note:SetShown(showNote)
+
+    -- Präsenz-Icon links vom Namen, vertikal mittig
+    if not r.pres then
+      r.pres = content:CreateTexture(nil, "ARTWORK")
+      r.pres:SetSize(12, 12)
+    end
+    r.pres:ClearAllPoints()
+    r.pres:SetPoint("RIGHT", r.name, "LEFT", -2, 0)
+    local presKey = (rows[i].presence or "ONLINE")
+    r.pres:SetTexture(PRES_ICONS[presKey] or PRES_ICONS.ONLINE)
+    r.pres:Show()  -- Wenn du ONLINE ohne Icon willst: if presKey=="ONLINE" then r.pres:Hide() end
 
     -- Texte
     local row = rows[i]
-
-    -- NAME farbig (Klassenfarbe) -> erst kürzen, dann einfärben
-    local plainName = TruncateText(r.name, row.name or "", col1)
+    local plainName = TruncateText(r.name, row.name or "", col1 - iconPad)
     if row.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[row.class] then
       local c = RAID_CLASS_COLORS[row.class]
       local colorStr = c.colorStr or string.format("FF%02X%02X%02X", (c.r*255), (c.g*255), (c.b*255))
@@ -646,18 +688,16 @@ local function ShowGrid(anchor, title, rows)
 
     FitText(r.zone, row.zone or "", col2)
     r.lvl:SetText(row.level and tostring(row.level) or "")
-    if showNote then
-      FitText(r.note, row.note or "", col4)
-    end
+    if showNote then FitText(r.note, row.note or "", col4) end
 
-    -- Klick-Overlay + Hover
+    -- Klick-Overlay + Hover (unverändert)
     r.btn:ClearAllPoints()
     r.btn:SetPoint("TOPLEFT", content, "TOPLEFT", -2, -(i-1)*rowH)
     r.btn:SetSize(totalW + 4, rowH)
     r.btn.bg = r.bg
     r.btn.charName = row.name or ""
-    r.btn.bnetID   = row.bnetID  -- wichtig: BN-Whisper
-    r.btn.bnName   = row.bnName 
+    r.btn.bnetID   = row.bnetID
+    r.btn.bnName   = row.bnName
 
     r.btn:SetScript("OnEnter", function(self)
       CancelHide()
@@ -687,6 +727,7 @@ local function ShowGrid(anchor, title, rows)
 
     r.name:Show(); r.zone:Show(); r.lvl:Show()
   end
+
 
   -- ungenutzte Zeilen verstecken
   for i=#rows+1, #rowsFS do
@@ -732,6 +773,7 @@ end
 
 -- ===================== Hover / Clicks =====================
 local function UpdateTexts()
+  safe(C_GuildInfo.GuildRoster)
   local gCount = select(1, GetGuildRows()) or 0
   local fCount = select(1, GetFriendRows()) or 0
   guildText:SetText(Colorize("Guild", gCount))
@@ -741,7 +783,10 @@ end
 guildBtn:SetScript("OnEnter", function(self)
   CancelHide()
   local _, rows = GetGuildRows()
+  guildText:SetText(Colorize("Guild", #rows))  -- direkt die echte Zahl zeigen
   ShowGrid(self, "Guild", rows)
+  -- optional: nach einem Tick nochmal nachziehen, falls Blizzard trödelt
+  C_Timer.After(0.2, UpdateTexts)
 end)
 guildBtn:SetScript("OnLeave", function() ScheduleHide() end)
 
