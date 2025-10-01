@@ -17,7 +17,7 @@ local defaults = {
   height = 20,
   scale = 1.0,
   bgAlpha = 0.75,
-  accent = true,
+  accent = false,
   labelColor = {0.75, 0.75, 0.85},
   valueColor = {0.40, 0.70, 1.00},
   locked = false,
@@ -37,6 +37,14 @@ local function PresenceFromFlags(isDND, isAFK)
   if isAFK then return "AFK" end
   return "ONLINE"
 end
+
+local function CursorSideAnchor()
+  local s = UIParent:GetEffectiveScale()
+  local x = select(1, GetCursorPosition())
+  local w = UIParent:GetWidth() * s
+  return (x > w*0.5) and "ANCHOR_CURSOR_LEFT" or "ANCHOR_CURSOR_RIGHT"
+end
+
 
 -- Blizzard-Status-Icons
 local PRES_ICONS = {
@@ -190,13 +198,21 @@ local function GetFriendRows()
         seen[name] = true
         online = online + 1
         local token = TokenFromLocalizedClass(info.className)
-        local pres = PresenceFromFlags(info.dnd, info.afk)
-        rows[#rows+1] = { name = name, zone = info.area or "", level = info.level or 0, note = "", class = token, presence = pres, bnetID = nil }
+        local noteText = (info.notes or info.note or "")  -- <- NEU: Freundesnotiz
+        rows[#rows+1] = {
+          name  = name,
+          zone  = info.area or "",
+          level = info.level or 0,
+          note  = noteText,
+          class = token,
+          presence = PresenceFromFlags(info.dnd, info.afk),
+          bnetID = nil,
+        }
       end
     end
   end
 
-  -- Battle.net Freunde (nur WoW-Client)
+  -- Battle.net-Freunde (nur WoW-Client)
   local bnum = BNGetNumFriends() or 0
   for i=1,bnum do
     local acct = C_BattleNet.GetFriendAccountInfo(i)
@@ -208,23 +224,24 @@ local function GetFriendRows()
         if nm and not seen[nm] then
           seen[nm] = true
           online = online + 1
+
           local token
           if g.classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
             local ci = C_CreatureInfo.GetClassInfo(g.classID)
             token = ci and ci.classFile or nil
           end
           if not token then token = TokenFromLocalizedClass(g.className) end
-          local pres = PresenceFromFlags(acct.isDND, acct.isAFK)
+
           rows[#rows+1] = {
-            name  = nm,
-            zone  = g.areaName or "",
-            level = g.characterLevel or 0,
-            note  = "",
-            class = token,
-            bnetID = acct.bnetAccountID,   -- wichtig für BN-Whisper
-            bnName = acct.accountName,          -- <--- NEU: für ChatFrame_SendBNetTell
-            project = g.wowProjectID,           -- optional
-            presence = pres,
+            name    = nm,
+            zone    = g.areaName or "",
+            level   = g.characterLevel or 0,
+            note    = acct.note or "",                 -- <- NEU: BNet-Notiz
+            class   = token,
+            bnetID  = acct.bnetAccountID,
+            bnName  = acct.accountName,
+            project = g.wowProjectID,
+            presence= PresenceFromFlags(acct.isDND, acct.isAFK),
           }
         end
       end
@@ -234,6 +251,7 @@ local function GetFriendRows()
   table.sort(rows, function(a,b) return a.name < b.name end)
   return online, rows
 end
+
 
 -- ===================== Bar UI / Position =====================
 local parent = UIParent
@@ -424,6 +442,10 @@ grid:SetBackdropBorderColor(0.9, 0.9, 1, 0.12)
 grid:Hide()
 grid:EnableMouse(true)
 
+grid:HookScript("OnHide", function()
+  GameTooltip:Hide()     -- falls das Grid durch Timer/Escape o.ä. zugeht
+end)
+
 local function ApplyTooltipStrata()
   if MiniSocialBroDB.tipTop then
     grid:SetFrameStrata("TOOLTIP"); grid:SetFrameLevel(100)
@@ -541,6 +563,7 @@ local function AcquireRow(i)
     MiniSocialBroBar.__msbMoving = false
     MiniSocialBroBar:StopMovingOrSizing()
     SaveBarPositionAbs()
+    GameTooltip:Hide() 
     return
   end
 
@@ -582,7 +605,7 @@ local hideTimer
 local function CancelHide()
   if hideTimer then hideTimer:Cancel(); hideTimer = nil end
 end
-local function HideGrid() grid:Hide(); scroll:SetVerticalScroll(0) end
+local function HideGrid() grid:Hide(); scroll:SetVerticalScroll(0); GameTooltip:Hide() end
 local function ScheduleHide()
   CancelHide()
   hideTimer = C_Timer.NewTimer(0.15, function()
@@ -695,35 +718,83 @@ local function ShowGrid(anchor, title, rows)
     r.btn:SetPoint("TOPLEFT", content, "TOPLEFT", -2, -(i-1)*rowH)
     r.btn:SetSize(totalW + 4, rowH)
     r.btn.bg = r.bg
-    r.btn.charName = row.name or ""
-    r.btn.bnetID   = row.bnetID
-    r.btn.bnName   = row.bnName
+    r.btn.charName  = row.name or ""
+    r.btn.bnetID    = row.bnetID
+    r.btn.bnName    = row.bnName
+    r.btn.level     = row.level or 0
+    r.btn.classTok  = row.class               -- z.B. "MAGE"
+    r.btn.classLoc  = (row.class and (LOCALIZED_CLASS_NAMES_MALE[row.class] or LOCALIZED_CLASS_NAMES_FEMALE[row.class])) or ""
+    r.btn.zone      = row.zone or ""
+    r.btn.note      = row.note or ""
+    r.btn.presence  = row.presence or "ONLINE"
+
 
     r.btn:SetScript("OnEnter", function(self)
-      CancelHide()
-      GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-      GameTooltip:ClearLines()
-      GameTooltip:AddLine(self.charName, 0.9, 0.9, 1)
-      GameTooltip:AddLine("Left: Whisper", 1,1,1)
-      GameTooltip:AddLine("Right: Invite", 1,1,1)
-      GameTooltip:Show()
-      RaiseGameTooltip()
-      if MiniSocialBroDB.zebra then
-        self.bg:SetColorTexture(1, 1, 1, 0.18)
-      else
-        self.bg:SetColorTexture(1, 1, 1, 0.10)
-      end
-    end)
-    r.btn:SetScript("OnLeave", function(self)
-      local idx = self.index or 1
-      if MiniSocialBroDB.zebra then
-        self.bg:SetColorTexture(1, 1, 1, (idx % 2 == 0) and 0.06 or 0.12)
-      else
-        self.bg:SetColorTexture(0, 0, 0, 0)
-      end
-      GameTooltip:Hide()
-      ScheduleHide()
-    end)
+  CancelHide()
+
+  --GameTooltip:SetOwner(self, "ANCHOR_NONE")
+    GameTooltip:SetOwner(self, CursorSideAnchor(), 16, 0)  -- direkt am Cursor
+    GameTooltip:ClearLines()
+
+  -- Name in Klassenfarbe
+  local r,g,b = 1,1,1
+  if self.classTok and RAID_CLASS_COLORS and RAID_CLASS_COLORS[self.classTok] then
+    local c = RAID_CLASS_COLORS[self.classTok]; r,g,b = c.r, c.g, c.b
+  end
+  GameTooltip:AddLine(self.charName or "Unknown", r, g, b)
+
+  -- Level + Klasse (golden wie im Default)
+  if (self.level and self.level > 0) or (self.classLoc and self.classLoc ~= "") then
+    local line = ""
+    if self.level and self.level > 0 then
+      line = line .. string.format(LEVEL.." %d", self.level)  -- „Stufe %d“ lokalisiert
+    end
+    if self.classLoc and self.classLoc ~= "" then
+      if line ~= "" then line = line .. " " end
+      line = line .. self.classLoc
+    end
+    GameTooltip:AddLine(line, 1.0, 0.82, 0.0)
+  end
+
+  -- Zone (grau)
+  if self.zone ~= "" then
+    GameTooltip:AddLine(self.zone, 0.8, 0.8, 0.8)
+  end
+
+  -- Notiz (hellgelb)
+  if self.note ~= "" then
+    GameTooltip:AddLine(self.note, 1.0, 1.0, 0.6, true)
+  end
+
+  -- Präsenz (nur anzeigen, wenn nicht ONLINE)
+  if self.presence == "AFK" then
+    GameTooltip:AddLine(PLAYER_AFK, 1.0, 0.7, 0.0)
+  elseif self.presence == "DND" then
+    GameTooltip:AddLine(PLAYER_DND, 1.0, 0.2, 0.2)
+  end
+
+  -- Bedienhinweis unten
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Left: Whisper   Right: Invite", 0.9, 0.9, 0.9)
+
+  local n  = GameTooltip:NumLines()
+  local fs = _G["GameTooltipTextLeft"..n]
+  if fs and fs.SetFont then
+    local hintSize = MiniSocialBroDB.compact and 10 or 11
+    fs:SetFont(STANDARD_TEXT_FONT, hintSize, "")   
+  end
+
+  GameTooltip:Show()
+  RaiseGameTooltip()
+
+  -- Row-Highlight
+  if MiniSocialBroDB.zebra then
+    self.bg:SetColorTexture(1, 1, 1, 0.18)
+  else
+    self.bg:SetColorTexture(1, 1, 1, 0.10)
+  end
+end)
+
 
     r.name:Show(); r.zone:Show(); r.lvl:Show()
   end

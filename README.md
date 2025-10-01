@@ -214,6 +214,10 @@ PRs welcome. Keep changes small and focused. For features:
 ---
 
 ## Changelog
+### 1.6.8
+- Modified Tooltip
+- Fixed BNet Notes
+
 ### 1.6.6
 - Added Class Colors
 - Fixed Layout in Rows
