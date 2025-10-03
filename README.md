@@ -215,6 +215,9 @@ PRs welcome. Keep changes small and focused. For features:
 
 ## Changelog
 ### 1.6.8
+- Minor Fixes
+
+### 1.6.8
 - Modified Tooltip
 - Fixed BNet Notes
 

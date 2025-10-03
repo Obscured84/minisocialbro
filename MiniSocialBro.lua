@@ -11,13 +11,13 @@ local function CloneTable(t)
 end
 
 local defaults = {
-  pos = nil,               -- legacy (relativ)
-  posAbs = nil,            -- absolut zu UIParent
+  pos = nil,
+  posAbs = nil,
   width = 300,
   height = 20,
   scale = 1.0,
   bgAlpha = 0.75,
-  accent = false,
+  accent = true,
   labelColor = {0.75, 0.75, 0.85},
   valueColor = {0.40, 0.70, 1.00},
   locked = false,
@@ -31,28 +31,6 @@ local defaults = {
   showNote = true,
   noteType = "public",
 }
--- Präsenz aus Flags ableiten
-local function PresenceFromFlags(isDND, isAFK)
-  if isDND then return "DND" end
-  if isAFK then return "AFK" end
-  return "ONLINE"
-end
-
-local function CursorSideAnchor()
-  local s = UIParent:GetEffectiveScale()
-  local x = select(1, GetCursorPosition())
-  local w = UIParent:GetWidth() * s
-  return (x > w*0.5) and "ANCHOR_CURSOR_LEFT" or "ANCHOR_CURSOR_RIGHT"
-end
-
-
--- Blizzard-Status-Icons
-local PRES_ICONS = {
-  ONLINE = "Interface\\FriendsFrame\\StatusIcon-Online",
-  AFK    = "Interface\\FriendsFrame\\StatusIcon-Away",
-  DND    = "Interface\\FriendsFrame\\StatusIcon-DnD",
-}
-
 
 local function ApplyDefaults()
   for k,v in pairs(defaults) do
@@ -62,7 +40,6 @@ local function ApplyDefaults()
   end
 end
 
--- MIGRATION
 local function MigrateDB()
   ApplyDefaults()
   MiniSocialBroDB.tooltip = MiniSocialBroDB.tooltip or {}
@@ -123,11 +100,32 @@ local function TruncateText(fs, text, maxW)
   return best
 end
 
--- ===================== Data helpers =====================
+-- Präsenz aus Flags ableiten
+local function PresenceFromFlags(isDND, isAFK)
+  if isDND then return "DND" end
+  if isAFK then return "AFK" end
+  return "ONLINE"
+end
+
+-- Blizzard-Status-Icons
+local PRES_ICONS = {
+  ONLINE = "Interface\\FriendsFrame\\StatusIcon-Online",
+  AFK    = "Interface\\FriendsFrame\\StatusIcon-Away",
+  DND    = "Interface\\FriendsFrame\\StatusIcon-DnD",
+}
+
+-- Tooltip an den Cursor anheften (links/rechts je nach Cursorposition)
+local function CursorSideAnchor()
+  local s = UIParent:GetEffectiveScale()
+  local x = select(1, GetCursorPosition())
+  local w = UIParent:GetWidth() * s
+  return (x > w*0.5) and "ANCHOR_CURSOR_LEFT" or "ANCHOR_CURSOR_RIGHT"
+end
+
 -- Sanitized Realmtag (für Chat/Whisper, entfernt Spaces, Punkte usw.)
 local function SanitizeRealm(r)
   if not r then return "" end
-  return (r:gsub("[%s%-%.'`´]", "")) -- Spaces, Bindestriche, Punkte, Akzente raus
+  return (r:gsub("[%s%-%.'`´]", ""))
 end
 
 -- Lokalisierte Klassenbezeichnung -> Token (WARRIOR, MAGE, ...)
@@ -157,12 +155,12 @@ local function NormalizeCharRealm(char, realm)
   return c
 end
 
--- ===================== Rows =====================
+-- ===================== Rows / Data =====================
 local function GetGuildRows()
   local rows, online = {}, 0
   if not IsInGuild() then return 0, rows end
 
-  safe(C_GuildInfo.GuildRoster)  -- <--- wichtig, damit die Daten aktuell sind
+  safe(C_GuildInfo.GuildRoster)
 
   local total = GetNumGuildMembers() or 0
   for i=1,total do
@@ -172,17 +170,19 @@ local function GetGuildRows()
       local pres = (status == 2 and "DND") or (status == 1 and "AFK") or "ONLINE"
       online = online + 1
       rows[#rows+1] = {
-        name = name, zone = zone or "", level = level or 0,
-        note = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or ""),
+        name  = name,
+        zone  = zone or "",
+        level = level or 0,
+        note  = (MiniSocialBroDB.noteType == "officer") and (officerNote or "") or (publicNote or ""),
         class = classFile or TokenFromLocalizedClass(classDisplayName),
-        presence = pres, bnetID = nil,
+        presence = pres,
+        bnetID = nil,
       }
     end
   end
   table.sort(rows, function(a,b) return a.name < b.name end)
   return online, rows
 end
-
 
 local function GetFriendRows()
   local rows, online = {}, 0
@@ -198,12 +198,11 @@ local function GetFriendRows()
         seen[name] = true
         online = online + 1
         local token = TokenFromLocalizedClass(info.className)
-        local noteText = (info.notes or info.note or "")  -- <- NEU: Freundesnotiz
         rows[#rows+1] = {
           name  = name,
           zone  = info.area or "",
           level = info.level or 0,
-          note  = noteText,
+          note  = (info.notes or info.note or ""),
           class = token,
           presence = PresenceFromFlags(info.dnd, info.afk),
           bnetID = nil,
@@ -212,7 +211,7 @@ local function GetFriendRows()
     end
   end
 
-  -- Battle.net-Freunde (nur WoW-Client)
+  -- Battle.net Freunde (nur WoW-Client)
   local bnum = BNGetNumFriends() or 0
   for i=1,bnum do
     local acct = C_BattleNet.GetFriendAccountInfo(i)
@@ -224,19 +223,17 @@ local function GetFriendRows()
         if nm and not seen[nm] then
           seen[nm] = true
           online = online + 1
-
           local token
           if g.classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
             local ci = C_CreatureInfo.GetClassInfo(g.classID)
             token = ci and ci.classFile or nil
           end
           if not token then token = TokenFromLocalizedClass(g.className) end
-
           rows[#rows+1] = {
             name    = nm,
             zone    = g.areaName or "",
             level   = g.characterLevel or 0,
-            note    = acct.note or "",                 -- <- NEU: BNet-Notiz
+            note    = acct.note or "",
             class   = token,
             bnetID  = acct.bnetAccountID,
             bnName  = acct.accountName,
@@ -251,7 +248,6 @@ local function GetFriendRows()
   table.sort(rows, function(a,b) return a.name < b.name end)
   return online, rows
 end
-
 
 -- ===================== Bar UI / Position =====================
 local parent = UIParent
@@ -400,9 +396,7 @@ local function Layout()
 end
 
 -- ===================== BN Whisper helper =====================
--- Öffnet einen BN-Whisper per Account-Name (schöner Header als "tell 48")
 local function OpenBNWhisper(bnetID, fallbackName)
-  -- Versuche erst den Account-Namen zu holen
   local accName
   if C_BattleNet and C_BattleNet.GetAccountInfoByID then
     local info = C_BattleNet.GetAccountInfoByID(bnetID)
@@ -410,23 +404,18 @@ local function OpenBNWhisper(bnetID, fallbackName)
   else
     accName = fallbackName
   end
-
   if accName and ChatFrame_SendBNetTell then
-    ChatFrame_SendBNetTell(accName)  -- öffnet BN-Whisper mit sauberem Header
+    ChatFrame_SendBNetTell(accName)
     return
   end
-
-  -- Fallback: direkte ChatEdit-Attribute (zur Not zeigt’s die ID)
   local editBox = ChatEdit_ChooseBoxForSend(DEFAULT_CHAT_FRAME)
   if not editBox then return end
   ChatEdit_ActivateChat(editBox)
   editBox:SetAttribute("chatType", "BN_WHISPER")
-  -- Je nach Client-Version wird mal tellTarget, mal channelTarget ausgewertet:
   editBox:SetAttribute("tellTarget", bnetID)
   editBox:SetAttribute("channelTarget", bnetID)
   ChatEdit_UpdateHeader(editBox)
 end
-
 
 -- ===================== Grid Tooltip (klickbar, sticky) =====================
 local grid = CreateFrame("Frame","MiniSocialBroTooltip", UIParent, "BackdropTemplate")
@@ -442,9 +431,8 @@ grid:SetBackdropBorderColor(0.9, 0.9, 1, 0.12)
 grid:Hide()
 grid:EnableMouse(true)
 
-grid:HookScript("OnHide", function()
-  GameTooltip:Hide()     -- falls das Grid durch Timer/Escape o.ä. zugeht
-end)
+-- Tooltip sicher verstecken, wenn Grid schließt
+grid:HookScript("OnHide", function() GameTooltip:Hide() end)
 
 local function ApplyTooltipStrata()
   if MiniSocialBroDB.tipTop then
@@ -484,13 +472,13 @@ scroll:SetScrollChild(content)
 content:SetSize(10,10)
 scroll:EnableMouse(true)
 
--- ScrollBar Referenz + Skin
+-- ScrollBar
 local sb = scroll.ScrollBar or _G[(scroll:GetName() or "") .. "ScrollBar"]
 local function SkinScrollBar()
   if not sb then return end
   sb:ClearAllPoints()
-  sb:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -6, -36)   -- unter Header
-  sb:SetPoint("BOTTOMRIGHT", grid, "BOTTOMRIGHT", -6, 22) -- über Hint
+  sb:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -6, -36)
+  sb:SetPoint("BOTTOMRIGHT", grid, "BOTTOMRIGHT", -6, 22)
   sb:SetWidth(16)
   if sb.ScrollUpButton then sb.ScrollUpButton:Hide() end
   if sb.ScrollDownButton then sb.ScrollDownButton:Hide() end
@@ -543,14 +531,17 @@ local function AcquireRow(i)
     local zone = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     local lvl  = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     local note = content:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    
     for _,fs in ipairs({name, zone, lvl, note}) do
       if fs.SetWordWrap then fs:SetWordWrap(false) end
       if fs.SetMaxLines then fs:SetMaxLines(1) end
-      if fs.SetJustifyV then fs:SetJustifyV("MIDDLE") end   -- <--- neu
+      if fs.SetJustifyV then fs:SetJustifyV("MIDDLE") end
     end
     local bg  = content:CreateTexture(nil, "BACKGROUND")
     local btn = CreateFrame("Button", nil, content)
+
+    -- Präsenz-Icon
+    local pres = content:CreateTexture(nil, "OVERLAY")
+    pres:SetSize(12, 12)
 
     btn:SetScript("OnMouseDown", function(self, button)
       if button=="LeftButton" and IsAltKeyDown() then
@@ -558,40 +549,35 @@ local function AcquireRow(i)
         MiniSocialBroBar.__msbMoving = true
       end
     end)
-   btn:SetScript("OnMouseUp", function(self, button)
-  if MiniSocialBroBar.__msbMoving then
-    MiniSocialBroBar.__msbMoving = false
-    MiniSocialBroBar:StopMovingOrSizing()
-    SaveBarPositionAbs()
-    GameTooltip:Hide() 
-    return
-  end
-
-  local target = self.charName
-  if button == "LeftButton" then
-    if self.bnetID then
-      -- Nutze den Account-Namen, damit kein "tell 48" erscheint
-      OpenBNWhisper(self.bnetID, self.bnName)
-    else
-      if target and target ~= "" then
-        ChatFrame_OpenChat("/w "..target.." ")
+    btn:SetScript("OnMouseUp", function(self, button)
+      if MiniSocialBroBar.__msbMoving then
+        MiniSocialBroBar.__msbMoving = false
+        MiniSocialBroBar:StopMovingOrSizing()
+        SaveBarPositionAbs()
+        GameTooltip:Hide()
+        return
       end
-    end
-  elseif button == "RightButton" then
-    if target and target ~= "" then
-      if C_PartyInfo and C_PartyInfo.InviteUnit then
-        C_PartyInfo.InviteUnit(target)
-      else
-        InviteUnit(target)
+      local target = self.charName
+      if button == "LeftButton" then
+        if self.bnetID then
+          OpenBNWhisper(self.bnetID, self.bnName)
+        else
+          if target and target ~= "" then
+            ChatFrame_OpenChat("/w "..target.." ")
+          end
+        end
+      elseif button == "RightButton" then
+        if target and target ~= "" then
+          if C_PartyInfo and C_PartyInfo.InviteUnit then
+            C_PartyInfo.InviteUnit(target)
+          else
+            InviteUnit(target)
+          end
+        end
       end
-    end
-  end
-end)
+    end)
 
-local pres = content:CreateTexture(nil, "ARTWORK")
-pres:SetSize(12, 12)
-rowsFS[i] = { name=name, zone=zone, lvl=lvl, note=note, bg=bg, btn=btn, pres=pres }
-
+    rowsFS[i] = { name=name, zone=zone, lvl=lvl, note=note, bg=bg, btn=btn, pres=pres }
   end
   return rowsFS[i]
 end
@@ -600,12 +586,33 @@ grid:SetScript("OnMouseWheel", function(self, delta)
   scroll:GetScript("OnMouseWheel")(scroll, delta)
 end)
 
+-- Hover state mgmt
+local lastHoverRow
+local function SetRowBG(btn, highlighted)
+  if not btn or not btn.bg then return end
+  local idx = btn.index or 1
+  if highlighted then
+    btn.bg:SetColorTexture(1, 1, 1, MiniSocialBroDB.zebra and 0.18 or 0.10)
+  else
+    if MiniSocialBroDB.zebra then
+      btn.bg:SetColorTexture(1, 1, 1, (idx % 2 == 0) and 0.06 or 0.12)
+    else
+      btn.bg:SetColorTexture(0, 0, 0, 0)
+    end
+  end
+end
+
 -- Sticky-hide helpers
 local hideTimer
 local function CancelHide()
   if hideTimer then hideTimer:Cancel(); hideTimer = nil end
 end
-local function HideGrid() grid:Hide(); scroll:SetVerticalScroll(0); GameTooltip:Hide() end
+local function HideGrid()
+  grid:Hide()
+  scroll:SetVerticalScroll(0)
+  GameTooltip:Hide()
+  lastHoverRow = nil
+end
 local function ScheduleHide()
   CancelHide()
   hideTimer = C_Timer.NewTimer(0.15, function()
@@ -650,7 +657,12 @@ local function ShowGrid(anchor, title, rows)
   local totalW = col1 + gap + col2 + gap + col3 + (showNote and (gap + col4) or 0)
   header:SetWidth(totalW)
 
-    local iconPad = 14  -- 12px Icon + 2px Luft
+  local iconPad = 18  -- 12px Icon + etwas Luft
+
+  -- optionaler Reset alter Icons
+  for i=1,#rowsFS do
+    if rowsFS[i].pres then rowsFS[i].pres:Hide() end
+  end
 
   for i=1,#rows do
     local r = AcquireRow(i)
@@ -687,16 +699,12 @@ local function ShowGrid(anchor, title, rows)
     r.note:SetWidth(col4);           r.note:SetHeight(rowH); r.note:SetJustifyH("LEFT");  if r.note.SetJustifyV then r.note:SetJustifyV("MIDDLE") end
     r.note:SetShown(showNote)
 
-    -- Präsenz-Icon links vom Namen, vertikal mittig
-    if not r.pres then
-      r.pres = content:CreateTexture(nil, "ARTWORK")
-      r.pres:SetSize(12, 12)
-    end
+    -- Präsenz-Icon fest links innen
     r.pres:ClearAllPoints()
-    r.pres:SetPoint("RIGHT", r.name, "LEFT", -2, 0)
+    r.pres:SetPoint("LEFT", content, "TOPLEFT", 4, rowCenterY)
     local presKey = (rows[i].presence or "ONLINE")
     r.pres:SetTexture(PRES_ICONS[presKey] or PRES_ICONS.ONLINE)
-    r.pres:Show()  -- Wenn du ONLINE ohne Icon willst: if presKey=="ONLINE" then r.pres:Hide() end
+    r.pres:Show()
 
     -- Texte
     local row = rows[i]
@@ -708,103 +716,103 @@ local function ShowGrid(anchor, title, rows)
     else
       r.name:SetText(plainName)
     end
-
     FitText(r.zone, row.zone or "", col2)
     r.lvl:SetText(row.level and tostring(row.level) or "")
     if showNote then FitText(r.note, row.note or "", col4) end
 
-    -- Klick-Overlay + Hover (unverändert)
+    -- Klick-Overlay + Daten
     r.btn:ClearAllPoints()
     r.btn:SetPoint("TOPLEFT", content, "TOPLEFT", -2, -(i-1)*rowH)
     r.btn:SetSize(totalW + 4, rowH)
-    r.btn.bg = r.bg
-    r.btn.charName  = row.name or ""
-    r.btn.bnetID    = row.bnetID
-    r.btn.bnName    = row.bnName
-    r.btn.level     = row.level or 0
-    r.btn.classTok  = row.class               -- z.B. "MAGE"
-    r.btn.classLoc  = (row.class and (LOCALIZED_CLASS_NAMES_MALE[row.class] or LOCALIZED_CLASS_NAMES_FEMALE[row.class])) or ""
-    r.btn.zone      = row.zone or ""
-    r.btn.note      = row.note or ""
-    r.btn.presence  = row.presence or "ONLINE"
+    r.btn.bg       = r.bg
+    r.btn.charName = row.name or ""
+    r.btn.bnetID   = row.bnetID
+    r.btn.bnName   = row.bnName
+    r.btn.level    = row.level or 0
+    r.btn.classTok = row.class
+    r.btn.classLoc = (row.class and (LOCALIZED_CLASS_NAMES_MALE[row.class] or LOCALIZED_CLASS_NAMES_FEMALE[row.class])) or ""
+    r.btn.zone     = row.zone or ""
+    r.btn.note     = row.note or ""
+    r.btn.presence = row.presence or "ONLINE"
 
-
+    -- Hover: Blizzard-Style Tooltip am Cursor + sauberer Highlight-State
     r.btn:SetScript("OnEnter", function(self)
-  CancelHide()
+      CancelHide()
 
-  --GameTooltip:SetOwner(self, "ANCHOR_NONE")
-    GameTooltip:SetOwner(self, CursorSideAnchor(), 16, 0)  -- direkt am Cursor
-    GameTooltip:ClearLines()
+      GameTooltip:SetOwner(self, CursorSideAnchor(), 16, 0)
+      GameTooltip:ClearLines()
 
-  -- Name in Klassenfarbe
-  local r,g,b = 1,1,1
-  if self.classTok and RAID_CLASS_COLORS and RAID_CLASS_COLORS[self.classTok] then
-    local c = RAID_CLASS_COLORS[self.classTok]; r,g,b = c.r, c.g, c.b
-  end
-  GameTooltip:AddLine(self.charName or "Unknown", r, g, b)
+      -- Name in Klassenfarbe
+      local rr,gg,bb = 1,1,1
+      if self.classTok and RAID_CLASS_COLORS and RAID_CLASS_COLORS[self.classTok] then
+        local c = RAID_CLASS_COLORS[self.classTok]; rr,gg,bb = c.r, c.g, c.b
+      end
+      GameTooltip:AddLine(self.charName or "Unknown", rr, gg, bb)
 
-  -- Level + Klasse (golden wie im Default)
-  if (self.level and self.level > 0) or (self.classLoc and self.classLoc ~= "") then
-    local line = ""
-    if self.level and self.level > 0 then
-      line = line .. string.format(LEVEL.." %d", self.level)  -- „Stufe %d“ lokalisiert
-    end
-    if self.classLoc and self.classLoc ~= "" then
-      if line ~= "" then line = line .. " " end
-      line = line .. self.classLoc
-    end
-    GameTooltip:AddLine(line, 1.0, 0.82, 0.0)
-  end
+      -- Level + Klasse
+      if (self.level and self.level > 0) or (self.classLoc and self.classLoc ~= "") then
+        local line = ""
+        if self.level and self.level > 0 then line = line .. string.format(LEVEL.." %d", self.level) end
+        if self.classLoc and self.classLoc ~= "" then
+          if line ~= "" then line = line .. " " end
+          line = line .. self.classLoc
+        end
+        GameTooltip:AddLine(line, 1.0, 0.82, 0.0)
+      end
 
-  -- Zone (grau)
-  if self.zone ~= "" then
-    GameTooltip:AddLine(self.zone, 0.8, 0.8, 0.8)
-  end
+      -- Zone
+      if self.zone ~= "" then GameTooltip:AddLine(self.zone, 0.8, 0.8, 0.8) end
 
-  -- Notiz (hellgelb)
-  if self.note ~= "" then
-    GameTooltip:AddLine(self.note, 1.0, 1.0, 0.6, true)
-  end
+      -- Notiz
+      if self.note ~= "" then GameTooltip:AddLine(self.note, 1.0, 1.0, 0.6, true) end
 
-  -- Präsenz (nur anzeigen, wenn nicht ONLINE)
-  if self.presence == "AFK" then
-    GameTooltip:AddLine(PLAYER_AFK, 1.0, 0.7, 0.0)
-  elseif self.presence == "DND" then
-    GameTooltip:AddLine(PLAYER_DND, 1.0, 0.2, 0.2)
-  end
+      -- Presence
+      if self.presence == "AFK" then
+        GameTooltip:AddLine(PLAYER_AFK, 1.0, 0.7, 0.0)
+      elseif self.presence == "DND" then
+        GameTooltip:AddLine(PLAYER_DND, 1.0, 0.2, 0.2)
+      end
 
-  -- Bedienhinweis unten
-  GameTooltip:AddLine(" ")
-  GameTooltip:AddLine("Left: Whisper   Right: Invite", 0.9, 0.9, 0.9)
+      -- Bedienhinweis kleiner
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine("Left: Whisper   Right: Invite   Alt+Left: Move", 0.85, 0.85, 0.85)
+      local n  = GameTooltip:NumLines()
+      local fs = _G["GameTooltipTextLeft"..n]
+      if fs and fs.SetFont then
+        local hintSize = MiniSocialBroDB.compact and 10 or 11
+        fs:SetFont(STANDARD_TEXT_FONT, hintSize, "")
+      end
 
-  local n  = GameTooltip:NumLines()
-  local fs = _G["GameTooltipTextLeft"..n]
-  if fs and fs.SetFont then
-    local hintSize = MiniSocialBroDB.compact and 10 or 11
-    fs:SetFont(STANDARD_TEXT_FONT, hintSize, "")   
-  end
+      GameTooltip:Show()
+      RaiseGameTooltip()
 
-  GameTooltip:Show()
-  RaiseGameTooltip()
+      -- Hover-Hintergrund korrekt setzen
+      if lastHoverRow and lastHoverRow ~= self then
+        SetRowBG(lastHoverRow, false)
+      end
+      SetRowBG(self, true)
+      lastHoverRow = self
+    end)
 
-  -- Row-Highlight
-  if MiniSocialBroDB.zebra then
-    self.bg:SetColorTexture(1, 1, 1, 0.18)
-  else
-    self.bg:SetColorTexture(1, 1, 1, 0.10)
-  end
-end)
-
+    r.btn:SetScript("OnLeave", function(self)
+      SetRowBG(self, false)
+      if lastHoverRow == self then lastHoverRow = nil end
+      GameTooltip:Hide()
+      ScheduleHide()
+    end)
 
     r.name:Show(); r.zone:Show(); r.lvl:Show()
   end
 
-
   -- ungenutzte Zeilen verstecken
   for i=#rows+1, #rowsFS do
     rowsFS[i].name:Hide(); rowsFS[i].zone:Hide(); rowsFS[i].lvl:Hide(); rowsFS[i].note:Hide()
+    if rowsFS[i].pres then rowsFS[i].pres:Hide() end
     if rowsFS[i].bg then rowsFS[i].bg:SetColorTexture(0,0,0,0) end
-    if rowsFS[i].btn then rowsFS[i].btn:ClearAllPoints(); rowsFS[i].btn:SetSize(1,1); rowsFS[i].btn.charName = nil; rowsFS[i].btn.bnetID = nil end
+    if rowsFS[i].btn then
+      rowsFS[i].btn:ClearAllPoints(); rowsFS[i].btn:SetSize(1,1)
+      rowsFS[i].btn.charName = nil; rowsFS[i].btn.bnetID = nil; rowsFS[i].btn.bnName = nil
+    end
   end
 
   content:SetSize(totalW, #rows * rowH)
@@ -815,7 +823,7 @@ end)
   if sb then
     scroll:SetPoint("TOPRIGHT", sb, "TOPLEFT", -4, 0)
   else
-    scroll:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -26, -38) -- Fallback
+    scroll:SetPoint("TOPRIGHT", grid, "TOPRIGHT", -26, -38)
   end
 
   local visibleH = math.min(#rows, maxRows) * rowH + 2
@@ -854,9 +862,8 @@ end
 guildBtn:SetScript("OnEnter", function(self)
   CancelHide()
   local _, rows = GetGuildRows()
-  guildText:SetText(Colorize("Guild", #rows))  -- direkt die echte Zahl zeigen
+  guildText:SetText(Colorize("Guild", #rows))
   ShowGrid(self, "Guild", rows)
-  -- optional: nach einem Tick nochmal nachziehen, falls Blizzard trödelt
   C_Timer.After(0.2, UpdateTexts)
 end)
 guildBtn:SetScript("OnLeave", function() ScheduleHide() end)
