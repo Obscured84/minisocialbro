@@ -214,7 +214,7 @@ PRs welcome. Keep changes small and focused. For features:
 ---
 
 ## Changelog
-### 1.6.8
+### 1.6.9
 - Minor Fixes
 
 ### 1.6.8
