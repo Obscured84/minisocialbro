@@ -3,7 +3,7 @@
 ## Notes: Gilde & Freunde unter der Minimap; klickbare Tabellen; Sticky-Tooltip; Gildennotizen; LDB/LibDBIcon; Minimap-Icon; Alt-Drag; Kompaktmodus; 
 ## X-Wago-ID: qKQxzy6x
 ## Author: Obscured
-## Version: 1.6.9
+## Version: 1.7.0
 ## SavedVariables: MiniSocialBroDB, MiniSocialBroIconDB
 ## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0
 ## IconTexture: Interface\AddOns\MiniSocialBro\media\msb_raven

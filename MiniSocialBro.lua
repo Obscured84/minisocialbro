@@ -199,7 +199,8 @@ local function GetFriendRows()
         online = online + 1
         local token = TokenFromLocalizedClass(info.className)
         rows[#rows+1] = {
-          name  = name,
+          name  = name,                      -- Invite/Whisper-Target (Name-Realm)
+          display = name,                    -- Anzeige in der Tabelle
           zone  = info.area or "",
           level = info.level or 0,
           note  = (info.notes or info.note or ""),
@@ -230,16 +231,23 @@ local function GetFriendRows()
           end
           if not token then token = TokenFromLocalizedClass(g.className) end
           rows[#rows+1] = {
-            name    = nm,
-            zone    = g.areaName or "",
-            level   = g.characterLevel or 0,
-            note    = acct.note or "",
-            class   = token,
-            bnetID  = acct.bnetAccountID,
-            bnName  = acct.accountName,
-            project = g.wowProjectID,
-            presence= PresenceFromFlags(acct.isDND, acct.isAFK),
-          }
+          -- Targets (funktional)
+          name    = nm,                                -- Invite/Whisper-Target (Name-Realm)
+          bnetID  = acct.bnetAccountID,
+          bnName  = acct.accountName,
+
+          -- Anzeige
+          charOnly = g.characterName or acct.accountName,
+          display  = string.format("%s (%s)", g.characterName or acct.accountName, acct.accountName),
+
+          zone    = g.areaName or "",
+          level   = g.characterLevel or 0,
+          note    = acct.note or "",
+          class   = token,
+          project = g.wowProjectID,
+          presence= PresenceFromFlags(acct.isDND, acct.isAFK),
+        }
+
         end
       end
     end
@@ -708,13 +716,37 @@ local function ShowGrid(anchor, title, rows)
 
     -- Texte
     local row = rows[i]
-    local plainName = TruncateText(r.name, row.name or "", col1 - iconPad)
+
+    -- ANZEIGE: BN -> "Char (BNName)", sonst normaler Name
+    local row = rows[i]
+    local showName = row.display or row.name or ""
+    local widthForName = (col1 - iconPad)
+    local plainName = TruncateText(r.name, showName, widthForName)
+
+    -- Teile trennen: alles ab "(" ist der BN-Teil
+    local open = plainName:find("%(")
+    local left  = open and plainName:sub(1, open-1) or plainName
+    local right = open and plainName:sub(open) or nil
+
+    -- Klassenfarbe für den linken Teil
+    local classStr
     if row.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[row.class] then
       local c = RAID_CLASS_COLORS[row.class]
-      local colorStr = c.colorStr or string.format("FF%02X%02X%02X", (c.r*255), (c.g*255), (c.b*255))
-      r.name:SetText("|c"..colorStr..plainName.."|r")
+      classStr = c.colorStr or string.format("FF%02X%02X%02X", (c.r*255), (c.g*255), (c.b*255))
+    end
+
+    if classStr then
+      if right then
+        r.name:SetText("|c"..classStr..left.."|r|cffb0b0b0"..right.."|r")
+      else
+        r.name:SetText("|c"..classStr..left.."|r")
+      end
     else
-      r.name:SetText(plainName)
+      if right then
+        r.name:SetText(left.."|cffb0b0b0"..right.."|r")
+      else
+        r.name:SetText(left)
+      end
     end
     FitText(r.zone, row.zone or "", col2)
     r.lvl:SetText(row.level and tostring(row.level) or "")
@@ -728,6 +760,7 @@ local function ShowGrid(anchor, title, rows)
     r.btn.charName = row.name or ""
     r.btn.bnetID   = row.bnetID
     r.btn.bnName   = row.bnName
+    r.btn.displayName = row.display or row.name or "" 
     r.btn.level    = row.level or 0
     r.btn.classTok = row.class
     r.btn.classLoc = (row.class and (LOCALIZED_CLASS_NAMES_MALE[row.class] or LOCALIZED_CLASS_NAMES_FEMALE[row.class])) or ""
@@ -747,7 +780,29 @@ local function ShowGrid(anchor, title, rows)
       if self.classTok and RAID_CLASS_COLORS and RAID_CLASS_COLORS[self.classTok] then
         local c = RAID_CLASS_COLORS[self.classTok]; rr,gg,bb = c.r, c.g, c.b
       end
-      GameTooltip:AddLine(self.charName or "Unknown", rr, gg, bb)
+      local disp = self.displayName or self.charName or "Unknown"
+      local open = disp:find("%(")
+      local left  = open and disp:sub(1, open-1) or disp
+      local right = open and disp:sub(open) or nil
+
+      local classStr
+      if self.classTok and RAID_CLASS_COLORS and RAID_CLASS_COLORS[self.classTok] then
+        local c = RAID_CLASS_COLORS[self.classTok]
+        classStr = c.colorStr or string.format("FF%02X%02X%02X", (c.r*255), (c.g*255), (c.b*255))
+      end
+
+      local lineText
+      if classStr then
+        lineText = "|c"..classStr..left.."|r"
+      else
+        lineText = left
+      end
+      if right then
+        lineText = lineText .. "|cffb0b0b0".. right .. "|r"
+      end
+
+      GameTooltip:AddLine(lineText)
+
 
       -- Level + Klasse
       if (self.level and self.level > 0) or (self.classLoc and self.classLoc ~= "") then
@@ -775,7 +830,7 @@ local function ShowGrid(anchor, title, rows)
 
       -- Bedienhinweis kleiner
       GameTooltip:AddLine(" ")
-      GameTooltip:AddLine("Left: Whisper   Right: Invite   Alt+Left: Move", 0.85, 0.85, 0.85)
+      GameTooltip:AddLine("Left: Whisper   Right: Invite", 0.85, 0.85, 0.85)
       local n  = GameTooltip:NumLines()
       local fs = _G["GameTooltipTextLeft"..n]
       if fs and fs.SetFont then

@@ -214,6 +214,9 @@ PRs welcome. Keep changes small and focused. For features:
 ---
 
 ## Changelog
+### 1.7.0
+- Fixed fixes ^^
+- Removed visible Realmname from Friends and added BNet name "Char Name (BNet Name)"
 ### 1.6.9
 - Minor Fixes
 
